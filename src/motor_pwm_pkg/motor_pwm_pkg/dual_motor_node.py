@@ -106,8 +106,8 @@ class DualMotorL298NNode(Node):
         wheel_separation = 0.2  # meters between wheels (adjust for your robot)
         
         # Calculate left and right wheel speeds
-        left_speed = linear - (angular * wheel_separation / 2.0)
-        right_speed = linear + (angular * wheel_separation / 2.0)
+        left_speed = linear + (angular * wheel_separation / 2.0)
+        right_speed = linear - (angular * wheel_separation / 2.0)
         
         # Normalize speeds to [-1.0, 1.0]
         max_speed = max(abs(left_speed), abs(right_speed))

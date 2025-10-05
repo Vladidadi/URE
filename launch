@@ -1,0 +1,9 @@
+
+ros2 launch robot_description_pkg display.launch.py /dev/null 2>&1 &
+ros2 launch hc_sr04_pkg hc_sr04_launch.py /dev/null 2>&1 &
+ros2 launch ros2_mpu6050 ros2_mpu6050.launch.py /dev/null 2>&1 &
+./install/motor_pwm_pkg/bin/dual_motor_node /dev/null 2>&1 &
+ros2 launch encoder_pkg encoder_launch.py /dev/null 2>&1 &
+ros2 launch robot_bringup ekf.launch.py /dev/null 2>&1 &
+
+

@@ -3,6 +3,7 @@
 import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import Odometry
+from sensor_msgs.msg import JointState
 from geometry_msgs.msg import TransformStamped, Quaternion
 from tf2_ros import TransformBroadcaster
 import math
@@ -21,8 +22,8 @@ class SimpleEncoderNode(Node):
         self.ticks_per_revolution = 20  # Adjust based on your encoder
         
         # Encoder setup (single pin per wheel)
-        self.left_encoder = Button(20, pull_up=True)  # GPIO 5
-        self.right_encoder = Button(21, pull_up=True)  # GPIO 6
+        self.left_encoder = Button(20, pull_up=True)  # GPIO 20
+        self.right_encoder = Button(21, pull_up=True)  # GPIO 21
         
         # Encoder callbacks
         self.left_encoder.when_pressed = self.left_encoder_callback
@@ -34,6 +35,10 @@ class SimpleEncoderNode(Node):
         self.last_left_count = 0
         self.last_right_count = 0
         
+        # Wheel angles (in radians)
+        self.left_wheel_angle = 0.0
+        self.right_wheel_angle = 0.0
+        
         # Odometry
         self.x = 0.0
         self.y = 0.0
@@ -42,6 +47,7 @@ class SimpleEncoderNode(Node):
         
         # ROS2 setup
         self.odom_publisher = self.create_publisher(Odometry, 'odom', 10)
+        self.joint_state_publisher = self.create_publisher(JointState, 'joint_states', 10)
         self.tf_broadcaster = TransformBroadcaster(self)
         
         # Timer for publishing odometry
@@ -53,10 +59,14 @@ class SimpleEncoderNode(Node):
     def left_encoder_callback(self):
         """Called when left encoder pin goes high"""
         self.left_count += 1
+        # Update wheel angle
+        self.left_wheel_angle = (self.left_count / self.ticks_per_revolution) * 2 * math.pi
         
     def right_encoder_callback(self):
         """Called when right encoder pin goes high"""
         self.right_count += 1
+        # Update wheel angle
+        self.right_wheel_angle = (self.right_count / self.ticks_per_revolution) * 2 * math.pi
     
     def calculate_odometry(self):
         """Calculate robot pose from encoder data"""
@@ -98,6 +108,17 @@ class SimpleEncoderNode(Node):
         
         return linear_velocity, angular_velocity
     
+    def publish_joint_states(self):
+        """Publish joint states for visualization"""
+        joint_state = JointState()
+        joint_state.header.stamp = self.get_clock().now().to_msg()
+        joint_state.name = ['left_wheel_joint', 'right_wheel_joint']
+        joint_state.position = [self.left_wheel_angle, self.right_wheel_angle]
+        joint_state.velocity = []
+        joint_state.effort = []
+        
+        self.joint_state_publisher.publish(joint_state)
+    
     def publish_odometry(self):
         """Publish odometry message"""
         velocities = self.calculate_odometry()
@@ -119,7 +140,6 @@ class SimpleEncoderNode(Node):
         odom.pose.pose.position.z = 0.0
         
         # Orientation (quaternion from yaw)
-        # Convert Euler angle to quaternion manually
         cos_half_yaw = math.cos(self.theta * 0.5)
         sin_half_yaw = math.sin(self.theta * 0.5)
         
@@ -143,6 +163,9 @@ class SimpleEncoderNode(Node):
         
         # Publish odometry
         self.odom_publisher.publish(odom)
+        
+        # Publish joint states for wheel visualization
+        self.publish_joint_states()
         
         # Publish transform
         transform = TransformStamped()
