@@ -78,6 +78,6 @@ slam_toolbox:
     throttle_scans: 1  # Process every scan at 10Hz
     
     # Map saving
-    map_file_name: /home/pi4/maps/map 
+    map_file_name: /home/pi4/maps/map_house 
     map_start_pose: [0.0, 0.0, 0.0]
     map_start_at_dock: false

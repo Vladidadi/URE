@@ -4,10 +4,11 @@ import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import JointState
-from geometry_msgs.msg import TransformStamped, Quaternion, Twist
+from geometry_msgs.msg import TransformStamped, Quaternion
 from tf2_ros import TransformBroadcaster
 import math
 from gpiozero import Button
+import math
 import threading
 import time
 
@@ -34,14 +35,9 @@ class SimpleEncoderNode(Node):
         self.last_left_count = 0
         self.last_right_count = 0
         
-        # Wheel positions (radians) for visualization
-        self.left_wheel_pos = 0.0
-        self.right_wheel_pos = 0.0
-        
-        # Motor directions (1.0 = forward, -1.0 = backward)
-        # We need to track this since single-pin encoders can't detect direction
-        self.left_direction = 1.0
-        self.right_direction = 1.0
+        # Wheel angles (in radians)
+        self.left_wheel_angle = 0.0
+        self.right_wheel_angle = 0.0
         
         # Odometry
         self.x = 0.0
@@ -51,49 +47,26 @@ class SimpleEncoderNode(Node):
         
         # ROS2 setup
         self.odom_publisher = self.create_publisher(Odometry, 'odom', 10)
-        self.joint_publisher = self.create_publisher(JointState, 'joint_states', 10)
+        self.joint_state_publisher = self.create_publisher(JointState, 'joint_states', 10)
         self.tf_broadcaster = TransformBroadcaster(self)
-        
-        # Subscribe to cmd_vel to determine motor directions
-        self.cmd_vel_sub = self.create_subscription(
-            Twist,
-            'cmd_vel',
-            self.cmd_vel_callback,
-            10
-        )
         
         # Timer for publishing odometry
         self.timer = self.create_timer(0.05, self.publish_odometry)  # 20Hz
         
         self.get_logger().info('Simple Encoder Node started')
         self.get_logger().info(f'Left encoder: GPIO 20, Right encoder: GPIO 21')
-    
-    def cmd_vel_callback(self, msg):
-        """Update motor directions based on cmd_vel commands"""
-        linear = msg.linear.x
-        angular = msg.angular.z
-        
-        # Calculate expected motor speeds using same formula as motor controller
-        left_speed = linear - (angular * self.wheel_separation / 2.0)
-        right_speed = linear + (angular * self.wheel_separation / 2.0)
-        
-        # Update direction flags
-        self.left_direction = 1.0 if left_speed >= 0 else -1.0
-        self.right_direction = 1.0 if right_speed >= 0 else -1.0
         
     def left_encoder_callback(self):
         """Called when left encoder pin goes high"""
         self.left_count += 1
-        # Increment wheel angle by angle per tick, considering direction
-        angle_per_tick = (2 * math.pi) / self.ticks_per_revolution
-        self.left_wheel_pos += angle_per_tick * self.left_direction
+        # Update wheel angle
+        self.left_wheel_angle = (self.left_count / self.ticks_per_revolution) * 2 * math.pi
         
     def right_encoder_callback(self):
         """Called when right encoder pin goes high"""
         self.right_count += 1
-        # Increment wheel angle by angle per tick, considering direction
-        angle_per_tick = (2 * math.pi) / self.ticks_per_revolution
-        self.right_wheel_pos += angle_per_tick * self.right_direction
+        # Update wheel angle
+        self.right_wheel_angle = (self.right_count / self.ticks_per_revolution) * 2 * math.pi
     
     def calculate_odometry(self):
         """Calculate robot pose from encoder data"""
@@ -107,16 +80,10 @@ class SimpleEncoderNode(Node):
         delta_left = self.left_count - self.last_left_count
         delta_right = self.right_count - self.last_right_count
         
-        # Convert ticks to distance, accounting for direction
+        # Convert ticks to distance
         distance_per_tick = (2 * math.pi * self.wheel_radius) / self.ticks_per_revolution
-        left_distance = delta_left * distance_per_tick * self.left_direction
-        right_distance = delta_right * distance_per_tick * self.right_direction
-        
-        # Update wheel positions (radians) for joint states
-        # This is already done in the encoder callbacks, but kept for clarity
-        # radians_per_tick = (2 * math.pi) / self.ticks_per_revolution
-        # self.left_wheel_pos is updated in left_encoder_callback
-        # self.right_wheel_pos is updated in right_encoder_callback
+        left_distance = delta_left * distance_per_tick
+        right_distance = delta_right * distance_per_tick
         
         # Calculate robot motion
         delta_distance = (left_distance + right_distance) / 2.0
@@ -140,6 +107,17 @@ class SimpleEncoderNode(Node):
         self.last_time = current_time
         
         return linear_velocity, angular_velocity
+    
+    def publish_joint_states(self):
+        """Publish joint states for visualization"""
+        joint_state = JointState()
+        joint_state.header.stamp = self.get_clock().now().to_msg()
+        joint_state.name = ['left_wheel_joint', 'right_wheel_joint']
+        joint_state.position = [self.left_wheel_angle, self.right_wheel_angle]
+        joint_state.velocity = []
+        joint_state.effort = []
+        
+        self.joint_state_publisher.publish(joint_state)
     
     def publish_odometry(self):
         """Publish odometry message"""
@@ -187,7 +165,7 @@ class SimpleEncoderNode(Node):
         self.odom_publisher.publish(odom)
         
         # Publish joint states for wheel visualization
-        self.publish_joint_states(current_time)
+        self.publish_joint_states()
         
         # Publish transform
         transform = TransformStamped()
@@ -200,22 +178,6 @@ class SimpleEncoderNode(Node):
         transform.transform.rotation = odom.pose.pose.orientation
         
         self.tf_broadcaster.sendTransform(transform)
-    
-    def publish_joint_states(self, current_time):
-        """Publish wheel joint states for visualization"""
-        joint_state = JointState()
-        joint_state.header.stamp = current_time.to_msg()
-        
-        # IMPORTANT: These names must match your URDF joint names exactly
-        # Common names: 'left_wheel_joint', 'right_wheel_joint'
-        # Or: 'wheel_left_joint', 'wheel_right_joint'
-        # Check your URDF and update these if needed
-        joint_state.name = ['left_wheel_joint', 'right_wheel_joint']
-        joint_state.position = [self.left_wheel_pos, self.right_wheel_pos]
-        joint_state.velocity = []
-        joint_state.effort = []
-        
-        self.joint_publisher.publish(joint_state)
         
     def destroy_node(self):
         """Clean shutdown"""
