@@ -1,11 +1,11 @@
+#!/usr/bin/env python3
 
-
+import time 
+import math
+import struct
+from sensor_msgs.msg import JointState
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import JointState
-import struct
-import math
-import time
 import serial
 from threading import Lock
 from rclpy.node import Node
@@ -74,10 +74,6 @@ class MecanumHardwareInterface(Node):
         self.joint_state_pub = self.create_publisher(JointState, 'joint_states', 10)
         self.tf_broadcaster = TransformBroadcaster(self)
         
-        # Low voltage protection
-        self.low_voltage_threshold = 6.0  # Stop motors below this voltage
-        self.last_voltage = 8.0
-        
         # Timer for odometry updates
         self.create_timer(0.05, self.update_odometry)  # 20Hz
         
@@ -108,15 +104,10 @@ class MecanumHardwareInterface(Node):
         # Convert m/s to pulses per 10ms
         factor = (self.encoder_cpr * 0.01) / (2 * math.pi * self.wheel_radius)
         
-        # Limit motor speeds to reduce current draw (adjust as needed)
-        max_speed = 30  # Reduce from 50 to limit current
-        
-        # Apply motor direction corrections based on actual hardware
-        # Adjust these signs until forward motion works correctly
-        m1 = max(-max_speed, min(max_speed, int(v_fl * factor)))    # Front Left
-        m2 = max(-max_speed, min(max_speed, int(v_fr * factor)))    # Front Right (removed negation)
-        m3 = max(-max_speed, min(max_speed, int(v_rl * factor)))    # Rear Left (removed negation)
-        m4 = max(-max_speed, min(max_speed, int(v_rr * factor)))    # Rear Right
+        m1 = max(-50, min(50, int(v_fl * factor)))
+        m2 = max(-50, min(50, int(-v_fr * factor)))  # Note: negated
+        m3 = max(-50, min(50, int(-v_rl * factor)))  # Note: negated
+        m4 = max(-50, min(50, int(v_rr * factor)))
         
         self.send_motor_speeds(m1, m2, m3, m4)
     
@@ -202,10 +193,10 @@ class MecanumHardwareInterface(Node):
         # Convert pulses to meters
         wheel_dist = [(d / self.encoder_cpr) * (2 * math.pi * self.wheel_radius) for d in deltas]
         
-        # Apply motor direction corrections (must match cmd_vel signs)
+        # Apply motor direction corrections
         d_fl = wheel_dist[0]
-        d_fr = wheel_dist[1]  # Removed negation
-        d_rl = wheel_dist[2]  # Removed negation
+        d_fr = -wheel_dist[1]
+        d_rl = -wheel_dist[2]
         d_rr = wheel_dist[3]
         
         # Forward kinematics
@@ -279,8 +270,7 @@ class MecanumHardwareInterface(Node):
             t.transform.rotation.w = qw
             
             self.tf_broadcaster.sendTransform(t)
-
-   
+  
     def destroy_node(self):
         """Stop motors on shutdown"""
         try:

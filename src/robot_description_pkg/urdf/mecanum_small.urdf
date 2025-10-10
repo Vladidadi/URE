@@ -158,7 +158,7 @@
   </link>
 
   <!-- Laser Scanner Link -->
-  <link name="scan">
+  <link name="laser">
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
@@ -226,7 +226,7 @@
   <!-- Laser scanner joint -->
   <joint name="scan_joint" type="fixed">
     <parent link="base_link"/>
-    <child link="scan"/>
+    <child link="laser"/>
     <origin xyz="0.1 0 0.15" rpy="0 0 0"/>
   </joint>
 
