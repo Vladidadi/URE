@@ -1,0 +1,17 @@
+/**:
+  ros__parameters:
+    # Serial Configuration
+    serial_port: "/dev/ttyACM1"  # or /dev/ttyACM0 depending on your Arduino
+    baud_rate: 115200
+    
+    # Robot Physical Parameters (adjust these to match your robot)
+    wheel_radius: 0.05  # meters (50mm)
+    wheel_base_width: 0.20  # meters (distance between left and right wheels)
+    wheel_base_length: 0.20  # meters (distance between front and rear wheels)
+    
+    # Motor Configuration
+    encoder_cpr: 5764  # 44 pulses * 131 gear ratio for JGB motors
+    
+    # Frame IDs
+    odom_frame: "odom"
+    base_frame: "base_link"
