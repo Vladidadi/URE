@@ -113,10 +113,10 @@ class MecanumHardwareInterface(Node):
         
         # Apply motor direction corrections based on actual hardware
         # Adjust these signs until forward motion works correctly
-        m1 = max(-max_speed, min(max_speed, int(-v_fl * factor)))    # Front Left
-        m2 = max(-max_speed, min(max_speed, int(-v_fr * factor)))    # Front Right (removed negation)
-        m3 = max(-max_speed, min(max_speed, int(-v_rl * factor)))    # Rear Left (removed negation)
-        m4 = max(-max_speed, min(max_speed, int(-v_rr * factor)))    # Rear Right
+        m1 = max(-max_speed, min(max_speed, int(v_fl * factor)))    # Front Left
+        m2 = max(-max_speed, min(max_speed, int(v_fr * factor)))    # Front Right (removed negation)
+        m3 = max(-max_speed, min(max_speed, int(v_rl * factor)))    # Rear Left (removed negation)
+        m4 = max(-max_speed, min(max_speed, int(v_rr * factor)))    # Rear Right
         
         self.send_motor_speeds(m1, m2, m3, m4)
     
@@ -203,10 +203,10 @@ class MecanumHardwareInterface(Node):
         wheel_dist = [(d / self.encoder_cpr) * (2 * math.pi * self.wheel_radius) for d in deltas]
         
         # Apply motor direction corrections (must match cmd_vel signs)
-        d_fl = -wheel_dist[0]
-        d_fr = -wheel_dist[1]  # Removed negation
-        d_rl = -wheel_dist[2]  # Removed negation
-        d_rr = -wheel_dist[3]
+        d_fl = wheel_dist[0]
+        d_fr = wheel_dist[1]  # Removed negation
+        d_rl = wheel_dist[2]  # Removed negation
+        d_rr = wheel_dist[3]
         
         # Forward kinematics
         lx = self.wheel_base_length / 2
