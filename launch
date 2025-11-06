@@ -7,3 +7,4 @@ ros2 launch encoder_pkg encoder_launch.py /dev/null 2>&1 &
 ros2 launch robot_bringup ekf.launch.py /dev/null 2>&1 &
 
 
+ros2 topic pub /goal_pose/goal geometry_msgs/PoseStamped "{header: {stamp: {sec: 0, nanosec: 0}, frame_id: 'map'}, pose: {position: {x: 2.0, y: 2.0, z: 0.0}, orientation: {x: 0.0, y: 0.0, z: 0.7071068, w: 0.7071068}}}" --once

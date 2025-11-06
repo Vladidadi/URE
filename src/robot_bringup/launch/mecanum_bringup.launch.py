@@ -27,6 +27,27 @@ def generate_launch_description():
             }],
             output='screen'
         ),
+ 	  start_nav_to_pose_cmd = Node(
+        package='robot_navigation',
+        executable='nav_to_pose.py',
+        output='screen',
+        parameters=[{'use_sim_time': use_sim_time}]
+    ),
+ 
+   start_assisted_teleop_cmd = Node(
+        package='robot_navigation',
+        executable='assisted_teleoperation.py',
+        output='screen',
+        parameters=[{'use_sim_time': use_sim_time}]
+    ),
+        Node(
+            package='robot_localization',
+            executable='ekf_node',
+            name='ekf_filter_node',
+            output='screen',
+            parameters=['/home/pi4/ros2_ws/src/robot_bringup/config/ekf.yaml'],
+        ),
+
         
         # Wheel Encoder Odometry
        # Node(
@@ -76,4 +97,7 @@ def generate_launch_description():
       #      output='screen',
       #      parameters=[ekf_config]
        # ),
+   ld.add_action(start_assisted_teleop_cmd)
+   ld.add_action(start_nav_to_pose_cmd)
+
     ])
