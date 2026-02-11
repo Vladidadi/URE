@@ -1,0 +1,20 @@
+from launch import LaunchDescription
+from launch_ros.actions import Node
+
+def generate_launch_description():
+    return LaunchDescription([
+        Node(
+            package='stereo_cameras',
+            executable='camera_nodes',
+            name='camera_nodes',
+            output='screen',
+        ),
+        Node(
+            package='stereo_image_proc',
+            executable='disparity_node',
+            name='disparity_node',
+            remappings=[
+            ],
+            output='screen',
+        )
+    ])

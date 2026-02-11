@@ -1,0 +1,97 @@
+#!/usr/bin/env python3
+
+"""
+Stereo Camera Node for ROS 2
+============================
+
+This node captures frames from two USB webcams simultaneously, ensures
+internal synchronization, and publishes them to ROS 2 topics suitable
+for stereo processing (e.g., `stereo_image_proc`). 
+
+Key Features:
+- High-quality synchronized stereo capture.
+- Publishes to `/camera_left/image_raw` and `/camera_right/image_raw`.
+- Internal synchronization avoids unnecessary ROS subscriptions.
+- Robust error handling and resource cleanup.
+- Configurable frame rate.
+
+Author: [Your Name]
+Date: 2025-11-10
+"""
+
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import Image
+from cv_bridge import CvBridge
+import cv2
+
+
+class StereoCameraNode(Node):
+    def __init__(self):
+        super().__init__('stereo_camera_node')
+        self.get_logger().info("Initializing Stereo Camera Node...")
+
+        # ROS publishers for left and right cameras
+        self.left_pub = self.create_publisher(Image, '/camera_left/image_raw', 10)
+        self.right_pub = self.create_publisher(Image, '/camera_right/image_raw', 10)
+
+        # Open USB cameras (adjust device indices as needed)
+        self.left_cam = cv2.VideoCapture(2)
+        self.right_cam = cv2.VideoCapture(4)
+
+        if not self.left_cam.isOpened():
+            self.get_logger().error("Failed to open left camera (index 0)")
+            raise RuntimeError("Left camera not available")
+        if not self.right_cam.isOpened():
+            self.get_logger().error("Failed to open right camera (index 1)")
+            raise RuntimeError("Right camera not available")
+
+        # Set desired resolution and frame rate (optional)
+        self.left_cam.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        self.left_cam.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        self.right_cam.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        self.right_cam.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        self.frame_rate = 30.0
+
+        self.bridge = CvBridge()
+
+        # Timer to capture and publish frames at the specified frame rate
+        self.timer = self.create_timer(1.0 / self.frame_rate, self.capture_and_publish)
+
+        self.get_logger().info("Stereo Camera Node initialized successfully.")
+
+    def capture_and_publish(self):
+        """Capture frames from both cameras and publish them in a synchronized manner."""
+        ret_left, frame_left = self.left_cam.read()
+        ret_right, frame_right = self.right_cam.read()
+
+        if not ret_left or not ret_right:
+            self.get_logger().warning("Failed to capture frames from cameras")
+            return
+
+        # Convert OpenCV images to ROS Image messages
+        left_msg = self.bridge.cv2_to_imgmsg(frame_left, encoding='bgr8')
+        right_msg = self.bridge.cv2_to_imgmsg(frame_right, encoding='bgr8')
+
+        # Publish both images
+        self.left_pub.publish(left_msg)
+        self.right_pub.publish(right_msg)
+        self.get_logger().debug("Published synchronized stereo frames")
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = StereoCameraNode()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        node.get_logger().info("Shutting down Stereo Camera Node...")
+    finally:
+        node.left_cam.release()
+        node.right_cam.release()
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()

@@ -29,12 +29,19 @@ def generate_launch_description():
         ),
         
         # Wheel Encoder Odometry
-        Node(
-            package='encoder_pkg',
-            executable='encoder_node',
-            name='encoder_node',
-            output='screen'
-        ),
+     start_nav_to_pose_cmd = Node(
+        package='yahboom_rosmaster_navigation',
+        executable='nav_to_pose.py',
+        output='screen',
+        parameters=[{'use_sim_time': use_sim_time}]
+     )
+ 
+     start_assisted_teleop_cmd = Node(
+        package='yahboom_rosmaster_navigation',
+        executable='assisted_teleoperation.py',
+        output='screen',
+        parameters=[{'use_sim_time': use_sim_time}]
+     )
         
         # Motor Driver
        # Node(
@@ -77,3 +84,7 @@ def generate_launch_description():
             parameters=[ekf_config]
         ),
     ])
+
+    ld = LaunchDescription()
+    ld.add_action(start_assisted_teleop_cmd)
+    ld.add_action(start_nav_to_pose_cmd)
