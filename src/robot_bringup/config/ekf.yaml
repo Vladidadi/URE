@@ -1,7 +1,9 @@
+# Requires /odom (wheel driver) for TF. With mecanum publish_tf false, ONLY this node may
+# publish odom->base_link (publish_tf below). If IMU is unplugged, use ekf_odom_only.yaml instead.
 ekf_filter_node:
   ros__parameters:
     frequency: 50.0
-    sensor_timeout: 0.1
+    sensor_timeout: 0.5
     two_d_mode: true
     publish_tf: true
 

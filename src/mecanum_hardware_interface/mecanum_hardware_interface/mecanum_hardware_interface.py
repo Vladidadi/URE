@@ -8,7 +8,6 @@ import math
 import time
 import serial
 from threading import Lock
-from rclpy.node import Node
 from geometry_msgs.msg import Twist, TransformStamped
 from nav_msgs.msg import Odometry
 from tf2_ros import TransformBroadcaster
@@ -29,7 +28,13 @@ class MecanumHardwareInterface(Node):
         self.declare_parameter('wheel_base_width', 0.20)
         self.declare_parameter('wheel_base_length', 0.20)
         self.declare_parameter('encoder_cpr', 5764)
-        
+        self.declare_parameter('odom_frame', 'odom')
+        self.declare_parameter('base_frame', 'base_link')
+        # When robot_localization EKF runs with publish_tf: true, set publish_tf false in
+        # mecanum_params.yaml to avoid two publishers for odom -> base_link.
+        # Default True so /odom TF still exists if the node is run without that yaml or without EKF.
+        self.declare_parameter('publish_tf', True)
+
         # Get parameters
         serial_port = self.get_parameter('serial_port').value
         baud_rate = self.get_parameter('baud_rate').value
@@ -37,6 +42,9 @@ class MecanumHardwareInterface(Node):
         self.wheel_base_width = self.get_parameter('wheel_base_width').value
         self.wheel_base_length = self.get_parameter('wheel_base_length').value
         self.encoder_cpr = self.get_parameter('encoder_cpr').value
+        self.odom_frame = self.get_parameter('odom_frame').value
+        self.base_frame = self.get_parameter('base_frame').value
+        self.publish_tf = bool(self.get_parameter('publish_tf').value)
         
         # Connect to Arduino
         try:
@@ -72,8 +80,8 @@ class MecanumHardwareInterface(Node):
         self.cmd_vel_sub = self.create_subscription(Twist, 'cmd_vel', self.cmd_vel_callback, 10)
         self.odom_pub = self.create_publisher(Odometry, 'odom', 10)
         self.joint_state_pub = self.create_publisher(JointState, 'joint_states', 10)
-        self.tf_broadcaster = TransformBroadcaster(self)
-        
+        self.tf_broadcaster = TransformBroadcaster(self) if self.publish_tf else None
+
         # Low voltage protection
         self.low_voltage_threshold = 6.0  # Stop motors below this voltage
         self.last_voltage = 8.0
@@ -81,7 +89,11 @@ class MecanumHardwareInterface(Node):
         # Timer for odometry updates
         self.create_timer(0.05, self.update_odometry)  # 20Hz
         
-        self.get_logger().info('Mecanum Hardware Interface ready')
+        self.get_logger().info(
+            f'Mecanum Hardware Interface ready '
+            f'(odom_frame={self.odom_frame}, base_frame={self.base_frame}, '
+            f'publish_tf={self.publish_tf})'
+        )
     
     def checksum(self, data):
         """Calculate XOR checksum"""
@@ -234,6 +246,7 @@ class MecanumHardwareInterface(Node):
         """Publish joint states for robot_state_publisher"""
         joint_state = JointState()
         joint_state.header.stamp = stamp.to_msg()
+        joint_state.header.frame_id = self.base_frame
         joint_state.name = [
             'front_left_wheel_joint',
             'front_right_wheel_joint',
@@ -250,8 +263,8 @@ class MecanumHardwareInterface(Node):
         with self.odom_lock:
             odom = Odometry()
             odom.header.stamp = stamp.to_msg()
-            odom.header.frame_id = 'odom'
-            odom.child_frame_id = 'base_link'
+            odom.header.frame_id = self.odom_frame
+            odom.child_frame_id = self.base_frame
             
             odom.pose.pose.position.x = self.x
             odom.pose.pose.position.y = self.y
@@ -267,18 +280,18 @@ class MecanumHardwareInterface(Node):
             odom.twist.twist.angular.z = w
             
             self.odom_pub.publish(odom)
-            
-            # TF
-            t = TransformStamped()
-            t.header.stamp = stamp.to_msg()
-            t.header.frame_id = 'odom'
-            t.child_frame_id = 'base_link'
-            t.transform.translation.x = self.x
-            t.transform.translation.y = self.y
-            t.transform.rotation.z = qz
-            t.transform.rotation.w = qw
-            
-            self.tf_broadcaster.sendTransform(t)
+
+            if self.publish_tf and self.tf_broadcaster is not None:
+                t = TransformStamped()
+                t.header.stamp = stamp.to_msg()
+                t.header.frame_id = self.odom_frame
+                t.child_frame_id = self.base_frame
+                t.transform.translation.x = self.x
+                t.transform.translation.y = self.y
+                t.transform.rotation.z = qz
+                t.transform.rotation.w = qw
+
+                self.tf_broadcaster.sendTransform(t)
 
    
     def destroy_node(self):

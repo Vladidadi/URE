@@ -1,0 +1,14 @@
+/**:
+  ros__parameters:
+    wheel_radius: 0.05
+    wheel_base_width: 0.20
+    wheel_base_length: 0.20
+    odom_frame: "odom"
+    base_frame: "base_link"
+    publish_tf: false
+    publish_fake_scan: true
+    publish_fake_imu: false
+    laser_frame: "laser"
+    cmd_timeout_sec: 0.5
+    scan_range: 25.0
+    scan_beams: 360

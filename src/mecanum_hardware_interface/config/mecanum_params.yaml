@@ -12,6 +12,9 @@
     # Motor Configuration
     encoder_cpr: 5764  # 44 pulses * 131 gear ratio for JGB motors
     
-    # Frame IDs
+    # Frame IDs (must match ekf.yaml map_frame/odom_frame/base_link_frame)
     odom_frame: "odom"
     base_frame: "base_link"
+    # false when ekf_node publishes odom->base_link (robot_bringup/config/ekf.yaml publish_tf: true).
+    # If IMU is off, run EKF with robot_bringup/config/ekf_odom_only.yaml so the filter still runs.
+    publish_tf: false
