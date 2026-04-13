@@ -11,6 +11,10 @@
     
     # Motor Configuration
     encoder_cpr: 5764  # 44 pulses * 131 gear ratio for JGB motors
+    # Reduce stationary jitter (counts/tick); increase if odom feels sluggish when creeping.
+    encoder_deadband: 2
+    # Drop a tick if any wheel raw delta exceeds this (serial glitch / misaligned frame).
+    max_encoder_delta_per_tick: 4000
     
     # Frame IDs (must match ekf.yaml map_frame/odom_frame/base_link_frame)
     odom_frame: "odom"

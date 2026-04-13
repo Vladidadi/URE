@@ -34,6 +34,10 @@ class MecanumHardwareInterface(Node):
         # mecanum_params.yaml to avoid two publishers for odom -> base_link.
         # Default True so /odom TF still exists if the node is run without that yaml or without EKF.
         self.declare_parameter('publish_tf', True)
+        # Ignore per-tick encoder noise (counts); helps stationary odom jitter.
+        self.declare_parameter('encoder_deadband', 2)
+        # Reject a tick if any wheel delta exceeds this (counts); catches bad reads / wrap glitches.
+        self.declare_parameter('max_encoder_delta_per_tick', 4000)
 
         # Get parameters
         serial_port = self.get_parameter('serial_port').value
@@ -45,7 +49,11 @@ class MecanumHardwareInterface(Node):
         self.odom_frame = self.get_parameter('odom_frame').value
         self.base_frame = self.get_parameter('base_frame').value
         self.publish_tf = bool(self.get_parameter('publish_tf').value)
-        
+        self.encoder_deadband = int(self.get_parameter('encoder_deadband').value)
+        self.max_encoder_delta_per_tick = int(
+            self.get_parameter('max_encoder_delta_per_tick').value
+        )
+
         # Connect to Arduino
         try:
             self.serial = serial.Serial(serial_port, baud_rate, timeout=0.1)
@@ -69,6 +77,7 @@ class MecanumHardwareInterface(Node):
         self.y = 0.0
         self.theta = 0.0
         self.last_encoders = [0, 0, 0, 0]
+        self._encoder_baseline_done = False
         self.last_time = self.get_clock().now()
         self.odom_lock = Lock()
         
@@ -101,7 +110,17 @@ class MecanumHardwareInterface(Node):
         for byte in data:
             result ^= byte
         return result
-    
+
+    @staticmethod
+    def _encoder_delta_int32(new_count, old_count):
+        """Signed delta with int32 wrap (Arduino encoders are int32)."""
+        a = new_count & 0xFFFFFFFF
+        b = old_count & 0xFFFFFFFF
+        d = (a - b) & 0xFFFFFFFF
+        if d >= 0x80000000:
+            d -= 0x100000000
+        return int(d)
+
     def cmd_vel_callback(self, msg):
         """Convert cmd_vel to motor speeds and send to Arduino"""
         vx = msg.linear.x
@@ -133,8 +152,6 @@ class MecanumHardwareInterface(Node):
         self.send_motor_speeds(m1, m2, m3, m4)
     
     def send_motor_speeds(self, m1, m2, m3, m4):
-        self.get_logger().info('sending motor speeds to arduino')
-
         """Send motor speeds to Arduino"""
         # Convert signed to unsigned bytes
         bytes_list = []
@@ -161,10 +178,11 @@ class MecanumHardwareInterface(Node):
         packet = bytes([self.START_BYTE] + data + [chk, self.END_BYTE])
         
         try:
-            self.serial.reset_input_buffer()
+            # Do not clear the RX buffer here — it can drop bytes and misalign 20-byte frames,
+            # producing huge bogus encoder deltas and jumping odom.
             self.serial.write(packet)
             self.serial.flush()
-            
+
             response = self.serial.read(20)
             
             if len(response) == 20 and response[0] == self.START_BYTE and response[19] == self.END_BYTE:
@@ -178,33 +196,53 @@ class MecanumHardwareInterface(Node):
                         encoders.append(value)
                     return encoders
             
-            return self.last_encoders
+            return None
             
         except Exception as e:
             self.get_logger().error(f'Read failed: {e}')
-            return self.last_encoders
+            return None
     
     def update_odometry(self):
         """Read encoders and update odometry"""
         current_time = self.get_clock().now()
         dt = (current_time - self.last_time).nanoseconds / 1e9
-        self.last_time = current_time
-        
-        # Read encoders
+
         encoders = self.read_encoders()
-        
-        # Calculate deltas
-        deltas = [encoders[i] - self.last_encoders[i] for i in range(4)]
+        if encoders is None:
+            self.last_time = current_time
+            return
+
+        if dt <= 0.0 or dt > 2.0:
+            self.get_logger().warn(f'Skipping odom tick: bad dt={dt}')
+            self.last_time = current_time
+            return
+
+        if not self._encoder_baseline_done:
+            self.last_encoders = list(encoders)
+            self._encoder_baseline_done = True
+            self.last_time = current_time
+            return
+
+        # Calculate deltas with int32 wrap; apply deadband for stationary noise
+        raw_deltas = [
+            self._encoder_delta_int32(encoders[i], self.last_encoders[i]) for i in range(4)
+        ]
+        db = self.encoder_deadband
+        deltas = [0 if abs(d) <= db else d for d in raw_deltas]
+
+        if any(abs(d) > self.max_encoder_delta_per_tick for d in raw_deltas):
+            self.get_logger().warn(
+                f'Rejecting encoder tick (outlier): raw_deltas={raw_deltas}'
+            )
+            self.last_time = current_time
+            return
+
         self.last_encoders = encoders
-        
-        # Convert pulses to radians for joint states
+
+        # Convert pulses to radians for joint states (continuous; do not wrap to [-pi, pi])
         for i in range(4):
             delta_radians = (deltas[i] / self.encoder_cpr) * 2 * math.pi
             self.wheel_positions[i] += delta_radians
-            # Normalize to [-pi, pi]
-            self.wheel_positions[i] = math.atan2(math.sin(self.wheel_positions[i]), 
-                                                   math.cos(self.wheel_positions[i]))
-            # Calculate velocity (rad/s)
             if dt > 0:
                 self.wheel_velocities[i] = delta_radians / dt
         
@@ -241,7 +279,9 @@ class MecanumHardwareInterface(Node):
         # Publish
         if dt > 0:
             self.publish_odom(current_time, vx/dt, vy/dt, w/dt)
-    
+
+        self.last_time = current_time
+
     def publish_joint_states(self, stamp):
         """Publish joint states for robot_state_publisher"""
         joint_state = JointState()

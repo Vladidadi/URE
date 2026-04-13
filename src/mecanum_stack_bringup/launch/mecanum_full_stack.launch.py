@@ -46,6 +46,7 @@ def generate_launch_description():
     use_sim_time = LaunchConfiguration('use_sim_time')
     arduino_port = LaunchConfiguration('arduino_serial_port')
     lidar_port = LaunchConfiguration('lidar_serial_port')
+    lidar_scan_mode = LaunchConfiguration('lidar_scan_mode')
 
     enable_mecanum_hw = LaunchConfiguration('enable_mecanum_hw')
     enable_sim_kinematic = LaunchConfiguration('enable_sim_kinematic')
@@ -101,6 +102,11 @@ def generate_launch_description():
                 'lidar_serial_port',
                 default_value='/dev/ttyUSB0',
                 description='Serial device for RPLidar A1.',
+            ),
+            DeclareLaunchArgument(
+                'lidar_scan_mode',
+                default_value='Standard',
+                description='RPLidar scan mode (e.g. Standard, Sensitivity).',
             ),
             DeclareLaunchArgument(
                 'map_yaml',
@@ -224,20 +230,27 @@ def generate_launch_description():
                 ],
             ),
             # --- LiDAR ---
-            GroupAction(
-                condition=IfCondition(enable_lidar),
+            # Delay startup slightly so USB/serial settle before first scan command.
+            TimerAction(
+                period=2.5,
                 actions=[
-                    IncludeLaunchDescription(
-                        PythonLaunchDescriptionSource(
-                            os.path.join(
-                                get_package_share_directory('sllidar_ros2'),
-                                'launch',
-                                'sllidar_a1_launch.py',
+                    GroupAction(
+                        condition=IfCondition(enable_lidar),
+                        actions=[
+                            IncludeLaunchDescription(
+                                PythonLaunchDescriptionSource(
+                                    os.path.join(
+                                        get_package_share_directory('sllidar_ros2'),
+                                        'launch',
+                                        'sllidar_a1_launch.py',
+                                    )
+                                ),
+                                launch_arguments={
+                                    'serial_port': lidar_port,
+                                    'scan_mode': lidar_scan_mode,
+                                }.items(),
                             )
-                        ),
-                        launch_arguments={
-                            'serial_port': lidar_port,
-                        }.items(),
+                        ],
                     )
                 ],
             ),
