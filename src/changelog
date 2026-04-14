@@ -1,0 +1,12 @@
+use map as fixed frame
+
+route [encoders]---odom--->[ekf]----filtered_odom--->[SLAM||ACML]----map---->[nav]
+
+check frames and topic subscriptions to ensure 2 guys arnt publishing to map or odom simultaniosly
+
+gui lsauncher checkboxes
+
+nav2 always running
+
+mapserver needed for acml but not SLAM
+

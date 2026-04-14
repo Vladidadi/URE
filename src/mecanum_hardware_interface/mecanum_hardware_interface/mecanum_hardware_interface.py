@@ -35,9 +35,12 @@ class MecanumHardwareInterface(Node):
         # Default True so /odom TF still exists if the node is run without that yaml or without EKF.
         self.declare_parameter('publish_tf', True)
         # Ignore per-tick encoder noise (counts); helps stationary odom jitter.
-        self.declare_parameter('encoder_deadband', 2)
+        self.declare_parameter('encoder_deadband', 8)
         # Reject a tick if any wheel delta exceeds this (counts); catches bad reads / wrap glitches.
         self.declare_parameter('max_encoder_delta_per_tick', 4000)
+        # Drop tiny cmd_vel so motors (and encoders) are not nudged by teleop noise / quantization.
+        self.declare_parameter('cmd_vel_linear_deadband', 0.02)
+        self.declare_parameter('cmd_vel_angular_deadband', 0.05)
 
         # Get parameters
         serial_port = self.get_parameter('serial_port').value
@@ -53,6 +56,15 @@ class MecanumHardwareInterface(Node):
         self.max_encoder_delta_per_tick = int(
             self.get_parameter('max_encoder_delta_per_tick').value
         )
+        self.cmd_vel_linear_deadband = float(
+            self.get_parameter('cmd_vel_linear_deadband').value
+        )
+        self.cmd_vel_angular_deadband = float(
+            self.get_parameter('cmd_vel_angular_deadband').value
+        )
+
+        self.odom_lock = Lock()
+        self._serial_lock = Lock()
 
         # Connect to Arduino
         try:
@@ -68,6 +80,9 @@ class MecanumHardwareInterface(Node):
                         self.get_logger().info('Arduino ready!')
                         break
                 time.sleep(0.1)
+            # Drop any trailing text/newlines so binary encoder frames stay aligned.
+            self.serial.reset_input_buffer()
+            self.send_motor_speeds(0, 0, 0, 0)
         except Exception as e:
             self.get_logger().error(f'Failed to connect: {e}')
             raise
@@ -79,7 +94,6 @@ class MecanumHardwareInterface(Node):
         self.last_encoders = [0, 0, 0, 0]
         self._encoder_baseline_done = False
         self.last_time = self.get_clock().now()
-        self.odom_lock = Lock()
         
         # Joint states (wheel positions in radians)
         self.wheel_positions = [0.0, 0.0, 0.0, 0.0]
@@ -126,7 +140,15 @@ class MecanumHardwareInterface(Node):
         vx = msg.linear.x
         vy = msg.linear.y
         wz = msg.angular.z
-        
+        lb = self.cmd_vel_linear_deadband
+        ab = self.cmd_vel_angular_deadband
+        if abs(vx) < lb:
+            vx = 0.0
+        if abs(vy) < lb:
+            vy = 0.0
+        if abs(wz) < ab:
+            wz = 0.0
+
         # Mecanum inverse kinematics
         lx = self.wheel_base_length / 2
         ly = self.wheel_base_width / 2
@@ -164,66 +186,87 @@ class MecanumHardwareInterface(Node):
         packet = bytes([self.START_BYTE] + data + [chk, self.END_BYTE])
         
         try:
-            self.serial.write(packet)
-            self.serial.flush()
+            with self._serial_lock:
+                self.serial.write(packet)
+                self.serial.flush()
         except Exception as e:
-            print(f"FAILED WRITING SERIAL")
             self.get_logger().error(f'Send failed: {e}')
     
     def read_encoders(self):
-        """Read encoder values from Arduino"""
-        # Build request: START | CMD | checksum | END
+        """Read encoder values from Arduino (resync on 0xAA; serial access serialized)."""
         data = [self.CMD_GET_ENCODERS]
         chk = self.checksum(data)
         packet = bytes([self.START_BYTE] + data + [chk, self.END_BYTE])
-        
-        try:
-            # Do not clear the RX buffer here — it can drop bytes and misalign 20-byte frames,
-            # producing huge bogus encoder deltas and jumping odom.
-            self.serial.write(packet)
-            self.serial.flush()
 
-            response = self.serial.read(20)
-            
-            if len(response) == 20 and response[0] == self.START_BYTE and response[19] == self.END_BYTE:
-                # Verify checksum
-                if self.checksum(response[1:18]) == response[18]:
-                    # Extract encoders (little-endian int32)
+        try:
+            with self._serial_lock:
+                self.serial.write(packet)
+                self.serial.flush()
+
+                deadline = time.monotonic() + 0.15
+                while time.monotonic() < deadline:
+                    b = self.serial.read(1)
+                    if not b:
+                        continue
+                    if b[0] != self.START_BYTE:
+                        continue
+                    rest = self.serial.read(19)
+                    if len(rest) != 19:
+                        continue
+                    response = bytes([self.START_BYTE]) + rest
+                    if response[19] != self.END_BYTE:
+                        continue
+                    if self.checksum(response[1:18]) != response[18]:
+                        continue
                     encoders = []
                     for i in range(4):
                         offset = 2 + i * 4
                         value = struct.unpack('<i', response[offset:offset+4])[0]
                         encoders.append(value)
                     return encoders
-            
-            return None
-            
+                return None
+
         except Exception as e:
             self.get_logger().error(f'Read failed: {e}')
             return None
     
     def update_odometry(self):
-        """Read encoders and update odometry"""
+        """Read encoders and update odometry.
+
+        Always publishes /odom, odom->base_link TF (if enabled), and /joint_states after the
+        encoder baseline is established, even when a serial read fails. That keeps TF from
+        expiring in RViz (no more blinking odom).
+        """
         current_time = self.get_clock().now()
         dt = (current_time - self.last_time).nanoseconds / 1e9
 
+        def publish_hold_stationary():
+            self.wheel_velocities = [0.0, 0.0, 0.0, 0.0]
+            self.publish_joint_states(current_time)
+            self.publish_odom(current_time, 0.0, 0.0, 0.0)
+
         encoders = self.read_encoders()
         if encoders is None:
-            self.last_time = current_time
-            return
-
-        if dt <= 0.0 or dt > 2.0:
-            self.get_logger().warn(f'Skipping odom tick: bad dt={dt}')
+            if self._encoder_baseline_done:
+                publish_hold_stationary()
             self.last_time = current_time
             return
 
         if not self._encoder_baseline_done:
             self.last_encoders = list(encoders)
             self._encoder_baseline_done = True
+            publish_hold_stationary()
             self.last_time = current_time
             return
 
-        # Calculate deltas with int32 wrap; apply deadband for stationary noise
+        valid_dt = 0.0 < dt <= 2.0
+        if not valid_dt:
+            if dt > 2.0:
+                self.get_logger().warn(f'Bad dt={dt}, holding pose (no integration)')
+            publish_hold_stationary()
+            self.last_time = current_time
+            return
+
         raw_deltas = [
             self._encoder_delta_int32(encoders[i], self.last_encoders[i]) for i in range(4)
         ]
@@ -234,52 +277,42 @@ class MecanumHardwareInterface(Node):
             self.get_logger().warn(
                 f'Rejecting encoder tick (outlier): raw_deltas={raw_deltas}'
             )
+            publish_hold_stationary()
             self.last_time = current_time
             return
 
         self.last_encoders = encoders
 
-        # Convert pulses to radians for joint states (continuous; do not wrap to [-pi, pi])
         for i in range(4):
             delta_radians = (deltas[i] / self.encoder_cpr) * 2 * math.pi
             self.wheel_positions[i] += delta_radians
-            if dt > 0:
-                self.wheel_velocities[i] = delta_radians / dt
-        
-        # Publish joint states
-        self.publish_joint_states(current_time)
-        
-        # Convert pulses to meters
+            self.wheel_velocities[i] = delta_radians / dt
+
         wheel_dist = [(d / self.encoder_cpr) * (2 * math.pi * self.wheel_radius) for d in deltas]
-        
-        # Apply motor direction corrections (must match cmd_vel signs)
+
         d_fl = -wheel_dist[0]
-        d_fr = -wheel_dist[1]  # Removed negation
-        d_rl = -wheel_dist[2]  # Removed negation
+        d_fr = -wheel_dist[1]
+        d_rl = -wheel_dist[2]
         d_rr = -wheel_dist[3]
-        
-        # Forward kinematics
+
         lx = self.wheel_base_length / 2
         ly = self.wheel_base_width / 2
-        
+
         vx = (d_fl + d_fr + d_rl + d_rr) / 4.0
         vy = (-d_fl + d_fr + d_rl - d_rr) / 4.0
         w = (-d_fl + d_fr - d_rl + d_rr) / (4.0 * (lx + ly))
-        
-        # Update pose
+
         with self.odom_lock:
             dx = vx * math.cos(self.theta) - vy * math.sin(self.theta)
             dy = vx * math.sin(self.theta) + vy * math.cos(self.theta)
-            
+
             self.x += dx
             self.y += dy
             self.theta += w
             self.theta = math.atan2(math.sin(self.theta), math.cos(self.theta))
-        
-        # Publish
-        if dt > 0:
-            self.publish_odom(current_time, vx/dt, vy/dt, w/dt)
 
+        self.publish_joint_states(current_time)
+        self.publish_odom(current_time, vx / dt, vy / dt, w / dt)
         self.last_time = current_time
 
     def publish_joint_states(self, stamp):

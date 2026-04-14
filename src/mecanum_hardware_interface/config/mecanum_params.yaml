@@ -11,14 +11,16 @@
     
     # Motor Configuration
     encoder_cpr: 5764  # 44 pulses * 131 gear ratio for JGB motors
-    # Reduce stationary jitter (counts/tick); increase if odom feels sluggish when creeping.
-    encoder_deadband: 2
+    # Reduce stationary jitter (counts/tick); increase if wheels still creep in RViz when stopped.
+    encoder_deadband: 8
+    cmd_vel_linear_deadband: 0.02
+    cmd_vel_angular_deadband: 0.05
     # Drop a tick if any wheel raw delta exceeds this (serial glitch / misaligned frame).
     max_encoder_delta_per_tick: 4000
     
     # Frame IDs (must match ekf.yaml map_frame/odom_frame/base_link_frame)
     odom_frame: "odom"
     base_frame: "base_link"
-    # false when ekf_node publishes odom->base_link (robot_bringup/config/ekf.yaml publish_tf: true).
-    # If IMU is off, run EKF with robot_bringup/config/ekf_odom_only.yaml so the filter still runs.
+    # Overridden by mecanum_hardware_launch.py publish_tf arg (mecanum_full_stack sets false when EKF on).
+    # If you ros2 run the node with only this yaml: set true when EKF is not running.
     publish_tf: false

@@ -22,11 +22,12 @@ from launch.actions import (
     DeclareLaunchArgument,
     GroupAction,
     IncludeLaunchDescription,
+    OpaqueFunction,
     TimerAction,
 )
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PythonExpression
+from launch.substitutions import LaunchConfiguration, PythonExpression, TextSubstitution
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
@@ -76,15 +77,26 @@ def generate_launch_description():
         ]
     )
 
-    mecanum_hw_active = PythonExpression(
-        [
-            '"',
-            enable_mecanum_hw,
-            '" == "true" and "',
-            enable_sim_kinematic,
-            '" != "true"',
+    def mecanum_hw_include(context, *args, **kwargs):
+        hw = LaunchConfiguration('enable_mecanum_hw').perform(context)
+        sim_k = LaunchConfiguration('enable_sim_kinematic').perform(context)
+        if hw != 'true' or sim_k == 'true':
+            return []
+        ekf_on = LaunchConfiguration('enable_ekf').perform(context) == 'true'
+        publish_tf_str = 'false' if ekf_on else 'true'
+        pkg_mec = get_package_share_directory('mecanum_hardware_interface')
+        return [
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(
+                    os.path.join(pkg_mec, 'launch', 'mecanum_hardware_launch.py')
+                ),
+                launch_arguments=[
+                    ('use_sim_time', LaunchConfiguration('use_sim_time')),
+                    ('serial_port', LaunchConfiguration('arduino_serial_port')),
+                    ('publish_tf', TextSubstitution(text=publish_tf_str)),
+                ],
+            )
         ]
-    )
 
     ld = LaunchDescription(
         [
@@ -194,25 +206,8 @@ def generate_launch_description():
                     os.path.join(robot_bringup_share, 'launch', 'mecanum_bringup.launch.py')
                 )
             ),
-            # --- mecanum serial driver (disabled when kinematic sim is on) ---
-            GroupAction(
-                condition=IfCondition(mecanum_hw_active),
-                actions=[
-                    IncludeLaunchDescription(
-                        PythonLaunchDescriptionSource(
-                            os.path.join(
-                                get_package_share_directory('mecanum_hardware_interface'),
-                                'launch',
-                                'mecanum_hardware_launch.py',
-                            )
-                        ),
-                        launch_arguments={
-                            'use_sim_time': use_sim_time,
-                            'serial_port': arduino_port,
-                        }.items(),
-                    )
-                ],
-            ),
+            # --- mecanum serial driver (publish_tf false when EKF provides odom->base_link) ---
+            OpaqueFunction(function=mecanum_hw_include),
             # --- kinematic simulator ---
             GroupAction(
                 condition=IfCondition(enable_sim_kinematic),
@@ -381,20 +376,20 @@ def generate_launch_description():
                 ],
             ),
             # --- Teleop ---
-            GroupAction(
-                condition=IfCondition(enable_teleop),
-                actions=[
-                    Node(
-                        package='teleop_twist_keyboard',
-                        executable='teleop_twist_keyboard',
-                        name='teleop_twist_keyboard',
-                        output='screen',
-                        parameters=[
-                            {'use_sim_time': ParameterValue(use_sim_time, value_type=bool)}
-                        ],
-                    )
-                ],
-            ),
+            # GroupAction(
+            #     condition=IfCondition(enable_teleop),
+            #     actions=[
+            #         Node(
+            #             package='teleop_twist_keyboard',
+            #             executable='teleop_twist_keyboard',
+            #             name='teleop_twist_keyboard',
+            #             output='screen',
+            #             parameters=[
+            #                 {'use_sim_time': ParameterValue(use_sim_time, value_type=bool)}
+            #             ],
+            #         )
+            #     ],
+            # ),
         ]
     )
 
