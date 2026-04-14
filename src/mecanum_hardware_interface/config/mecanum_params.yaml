@@ -17,6 +17,8 @@
     cmd_vel_angular_deadband: 0.05
     # Drop a tick if any wheel raw delta exceeds this (serial glitch / misaligned frame).
     max_encoder_delta_per_tick: 4000
+    # Per-wheel command to Arduino (was hardcoded 30). Lower = slower top speed / less current.
+    max_motor_command: 22
     
     # Frame IDs (must match ekf.yaml map_frame/odom_frame/base_link_frame)
     odom_frame: "odom"

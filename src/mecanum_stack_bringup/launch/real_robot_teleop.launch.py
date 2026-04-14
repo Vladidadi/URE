@@ -38,7 +38,7 @@ def generate_launch_description():
                     ('enable_sim_kinematic', 'false'),
                     ('enable_mecanum_hw', 'true'),
                     ('enable_lidar', 'true'),
-                    ('enable_imu', use_imu_ekf),
+                    ('enable_imu', 'false'),#because the imu is on a different device
                     ('enable_ultrasonic', 'false'),
                     ('enable_ekf', use_imu_ekf),
                     ('enable_slam', 'false'),

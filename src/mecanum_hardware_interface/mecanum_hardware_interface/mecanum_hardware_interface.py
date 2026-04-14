@@ -41,6 +41,8 @@ class MecanumHardwareInterface(Node):
         # Drop tiny cmd_vel so motors (and encoders) are not nudged by teleop noise / quantization.
         self.declare_parameter('cmd_vel_linear_deadband', 0.02)
         self.declare_parameter('cmd_vel_angular_deadband', 0.05)
+        # Per-wheel command sent to Arduino (same units as legacy hardcoded 30; lower = slower).
+        self.declare_parameter('max_motor_command', 22)
 
         # Get parameters
         serial_port = self.get_parameter('serial_port').value
@@ -61,6 +63,9 @@ class MecanumHardwareInterface(Node):
         )
         self.cmd_vel_angular_deadband = float(
             self.get_parameter('cmd_vel_angular_deadband').value
+        )
+        self.max_motor_command = max(
+            1, min(255, int(self.get_parameter('max_motor_command').value))
         )
 
         self.odom_lock = Lock()
@@ -115,7 +120,7 @@ class MecanumHardwareInterface(Node):
         self.get_logger().info(
             f'Mecanum Hardware Interface ready '
             f'(odom_frame={self.odom_frame}, base_frame={self.base_frame}, '
-            f'publish_tf={self.publish_tf})'
+            f'publish_tf={self.publish_tf}, max_motor_command={self.max_motor_command})'
         )
     
     def checksum(self, data):
@@ -161,15 +166,11 @@ class MecanumHardwareInterface(Node):
         # Convert m/s to pulses per 10ms
         factor = (self.encoder_cpr * 0.01) / (2 * math.pi * self.wheel_radius)
         
-        # Limit motor speeds to reduce current draw (adjust as needed)
-        max_speed = 30  # Reduce from 50 to limit current
-        
-        # Apply motor direction corrections based on actual hardware
-        # Adjust these signs until forward motion works correctly
-        m1 = max(-max_speed, min(max_speed, int(-v_fl * factor)))    # Front Left
-        m2 = max(-max_speed, min(max_speed, int(-v_fr * factor)))    # Front Right (removed negation)
-        m3 = max(-max_speed, min(max_speed, int(-v_rl * factor)))    # Rear Left (removed negation)
-        m4 = max(-max_speed, min(max_speed, int(-v_rr * factor)))    # Rear Right
+        lim = self.max_motor_command
+        m1 = max(-lim, min(lim, int(-v_fl * factor)))
+        m2 = max(-lim, min(lim, int(-v_fr * factor)))
+        m3 = max(-lim, min(lim, int(-v_rl * factor)))
+        m4 = max(-lim, min(lim, int(-v_rr * factor)))
         
         self.send_motor_speeds(m1, m2, m3, m4)
     
